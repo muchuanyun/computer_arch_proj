@@ -1,0 +1,181 @@
+Branch Predictor Project
+------------------------------------------
+This is the course project of UCSD CSE240A sp16, fulfilled by Yaping Sun.
+E-mail: muchuanyun@gmail.com
+------------------------------------------
+
+This project includs various branch predictors in a simulated environment. The framework (main.c) will perform all of the
+command-line switches as well as the reading in of the trace files. The predictors are fulfilled in the predictor.c file. 
+
+------------
+-- Traces --
+------------
+
+These predictors will make predictions based on traces of real programs.  Each line in the trace file contains the address of a branch in hex as well as its outcome (Not Taken = 0, Taken = 1):
+
+<Address> <Outcome>
+
+Sample Trace from int_1:
+0x40d7f9 0
+0x40d81e 1
+0x40d7f9 1
+0x40d81e 0
+0x40d83d 0
+0x40d86d 1
+0x40d86d 1
+0x40d86d 1
+0x40d86d 1
+0x40d86d 1
+
+----------------------------
+-- Running the Predictor --
+----------------------------
+
+In order to build the predictor, just run the makefile. Then run the program on an uncompressed trace as follows:
+  ./predictor <options> [<trace>]
+
+If no trace file is provided then the predictor will read in input from STDIN.
+For the traces that are rather large when uncompressed, run the predictor ona compressed trace as the following:
+  bunzip -kc trace.bz2 | ./predictor <options>
+
+In either case the <options> that can be used to change the type of predictor
+being run are as follows:
+  --help       Print usage message
+  --<type>     Branch prediction scheme:
+     static
+     gshare:<# ghistory>
+     local:<# lhistory>:<# index>
+     tournament:<# ghistory>:<# lhistory>:<# index>
+     custom
+
+An example of running a gshare predictor with 10 bits of history
+would be:
+  bunzip -kc ../traces/int1_bz2 | ./predictor --gshare:10
+
+-------------------------------
+-- Details of each Predictor --
+-------------------------------
+
+<-- Gshare -->
+
+Configuration:
+    ghistoryBits    // Indicates the length of Global History kept
+
+The Gshare predictor is characterized by XORing the global history register
+with the lower bits (same length as the global history) of the branch's
+address.  This XORed value is then used to index into a 1D BHT of
+2-bit predictors.
+
+<-- Local -->
+
+Configuration:
+    lhistoryBits    // Indicates the length of Local History kept in the PHT
+    pcIndexBits     // Indicates the number of bits used to index the PHT
+
+The Local predictor is characterized by using the address of a branch to index into a 1D PHT where local branch history is kept.  This local history is then used to index into a 1D BHT of 2-bit predictors.
+
+<-- Tournament -->
+
+Configuration:
+    ghistoryBits    // Indicates the length of Global History kept
+    lhistoryBits    // Indicates the length of Local History kept in the PHT
+    pcIndexBits     // Indicates the number of bits used to index the PHT
+
+The Tournament Predictor here is similar to the one used in the
+Alpha 21264.  The difference between the Alpha 21264's predictor and the onehere is that all of the underlying counters in the current one will be 2-bit predictors. The 'ghistoryBits' will be used to size the global and choice predictors while the 'lhistoryBits' and 'pcIndexBits' will be used to size the local predictor.
+
+<-- Custom -->
+
+The custom predictor is built according to the paper:
+
+Jiménez, Daniel A., and Calvin Lin. "Dynamic branch prediction with perceptrons." In High-Performance Computer Architecture, 2001. HPCA. The Seventh International Symposium on, pp. 197-206. IEEE, 2001.
+
+It is reported that the perceptron predictor outperforms gshare and bi-mode within the hardware limiation.
+
+For my implementation, the thereshold $\theta$ is set to be floor(1.93*ghistoryBits +14). The number of bits per weigth is $1+log_2(\theta)$.
+
+--------------------
+-- Things to Note --
+--------------------
+
+All history should be initialized to NOTTAKEN.  History registers should be
+updated by shifting in new history to the least significant bit position.
+
+Ex. 4 bits of history, outcome of next branch is NT
+  T NT T NT   <<  NT
+  Result: NT T NT NT
+
+All 2-bit predictors should be initialized to WN (Weakly Not Taken).
+They should also have the following state transitions:
+        NT      NT      NT
+      ----->  ----->  ----->
+    ST      WT      WN      SN
+      <-----  <-----  <-----
+        T       T       T
+
+The Choice Predictor used to select which predictor to use in the Alpha 21264. Tournament predictor should be initialized to Weakly select the Global
+Predictor.
+
+----------------------
+-- Parameter Tuning --
+----------------------
+The optimal parameter combination for each type of predictor is chosen by picking the one with the minimum average miss prediction rate from all possible combinations under the resource limitation. This process is achieved by running the following three tcl scripts:
+1. run_all_gshare.tcl
+2. run_all_tournament.tcl
+3. run_all_perceptron.tcl
+
+The calculation formulas and results are shown below:
+resource limit = 64k + 256 (bit) = 2^16 + 2^8
+
+1. gshare:
+BHT = 2^ghistoryBits * 2 
+GHR = ghistoryBits
+
+Optimal within the HW limit:
+ghistoryBits = 15
+
+2. tournament:
+PHT = 2^pcIndexBits * lhistoryBits
+LBHT = 2^lhistoryBits * 2
+GBHT = 2^ghistoryBits * 2 
+GHR = ghistoryBits
+Choicer = 2^ghistoryBits * 2
+
+Optimal within the HW limit:
+ghistoryBits = 13
+lhistoryBits = 12
+pcIndexBits  = 11
+
+3. custom(perceptron):
+GHR = ghistoryBits
+percep_tab = 2^pcIndexBits * (1+log(1.93*ghistoryBits+14))
+
+Optimal within the HW limit:
+ghistoryBits = 31
+pcIndexBits: 12
+
+
+----------------------------
+-- Results on test traces --
+----------------------------
+Using the optimal parameter set for each type, we show the average miss predictions on the given traces:
+
+1. gshare
+===================
+min avg miss rate: 6.236083333333333
+ghistoryBits: 15
+
+2. tournament
+===================
+min avg miss rate: 6.252166666666667
+ghistoryBits: 13
+lhistoryBits: 12
+pcIndexBits: 11
+
+3. custom (perceptron)
+===================
+min avg miss rate: 3.4025000000000003
+ghistoryBits: 31
+pcIndexBits: 12
+
+I did not test the predictors on other traces, so the performance may vary.
